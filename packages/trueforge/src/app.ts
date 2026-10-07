@@ -54,6 +54,7 @@ import type { WithTransaction } from './db/transaction';
 import type { IWebSearchProviderStore } from './db/webSearchProviderStore';
 import { createClientCertificateMiddleware } from './http/tls';
 import type { IOAuthTokenStore } from './mcp/auth/types';
+import { createTrueForgeMcpRouter } from './mcp/server/trueforge/route';
 import { PACKAGE_VERSION } from './packageVersion';
 import { OPENAPI_DOCUMENT_TAGS } from './routes/openapiTags';
 import type { ActiveTurnRegistry } from './runtime/activeTurns';
@@ -521,6 +522,19 @@ export function createServerApp<TTransaction>(deps: ServerDeps<TTransaction>) {
       }),
       authMiddleware,
     ),
+  );
+
+  // First-party TrueForge MCP (Streamable HTTP). Protocol endpoint.
+  app.use('/mcp', authMiddleware);
+  app.route(
+    '/mcp',
+    createTrueForgeMcpRouter({
+      sessionStore: deps.sessionStore,
+      resolveRequestContext,
+      serverUrl: configuration.SERVER_URL,
+      version: PACKAGE_VERSION,
+      logger: deps.logger,
+    }),
   );
 
   const uiBasePath = getPublicUiBasePath();
