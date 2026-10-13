@@ -7,7 +7,7 @@
  */
 import { z } from '@hono/zod-openapi';
 import { CreatedBySubjectSchema, TokenPaginationSchema } from '@truefoundry/trueforge-core/agent-session';
-import { isReservedResourceName, NameSchema } from './common';
+import { NameSchema } from './common';
 
 export const SANDBOX_ENVIRONMENT_DESCRIPTION_MAX_LENGTH = 1024;
 
@@ -114,9 +114,9 @@ const SandboxEnvironmentManifestFieldsSchema = z
 export const SandboxEnvironmentManifestSchema =
   SandboxEnvironmentManifestFieldsSchema.openapi('SandboxEnvironmentManifest');
 
-/** PUT body manifest — rejects the system `"default"` env and reserved first-party brand names. */
-const SandboxEnvironmentManifestRequestSchema = SandboxEnvironmentManifestFieldsSchema.refine(
-  manifest => manifest.name !== DEFAULT_SANDBOX_ENVIRONMENT_NAME && !isReservedResourceName(manifest.name),
+/** PUT body manifest — rejects the reserved system `"default"` environment. */
+export const SandboxEnvironmentManifestRequestSchema = SandboxEnvironmentManifestFieldsSchema.refine(
+  manifest => manifest.name !== DEFAULT_SANDBOX_ENVIRONMENT_NAME,
   { message: 'name is reserved', path: ['name'] },
 ).openapi('SandboxEnvironmentManifestRequest');
 
