@@ -227,6 +227,7 @@ function createTurnResolver(deps: {
       return {
         url: connection.url,
         headers: connection.headers,
+        ...(connection.fetch === undefined ? {} : { fetch: connection.fetch }),
       };
     },
     mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,

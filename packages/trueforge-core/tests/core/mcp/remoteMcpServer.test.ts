@@ -7,7 +7,7 @@ import {
   type ToolSchema,
 } from '../../../src/core/mcp/IMCPServer';
 import type { RemoteMcpHeaders } from '../../../src/core/mcp/RemoteMCP';
-import { connectRemoteMcp } from '../../../src/core/mcp/remoteMcpClient';
+import { connectRemoteMcp, type RemoteMcpFetch } from '../../../src/core/mcp/remoteMcpClient';
 import type { ToolSelectorConfig } from '../../../src/core/mcp/ToolSelectorPolicy';
 import { NOOP_AGENT_TRACING } from '../../../src/core/tracing/NoopAgentTracing';
 
@@ -127,12 +127,14 @@ function makeServer(params: {
   sessionId?: string | undefined;
   transportType?: 'streamable-http' | 'sse' | undefined;
   headers?: RemoteMcpHeaders | undefined;
+  fetch?: RemoteMcpFetch;
 }): ToolSet {
   const remote = new RemoteMCP({
     name: 'my-inline',
     id: 'inline-id-123',
     url: 'https://mcp.example.com/mcp',
     headers: params.headers ?? {},
+    ...(params.fetch === undefined ? {} : { fetch: params.fetch }),
     logger: noopLogger,
     tracing: NOOP_AGENT_TRACING,
     sessionId: params.sessionId,
@@ -150,6 +152,16 @@ function makeServer(params: {
 }
 
 describe('RemoteMCP + ToolSet', () => {
+  it('passes a connection-specific fetch to the MCP transport', async () => {
+    installFakeConnection();
+    const fetch = jest.fn() as unknown as RemoteMcpFetch;
+    const server = makeServer({ fetch });
+
+    await server.listTools();
+
+    expect(mockConnect).toHaveBeenCalledWith(expect.objectContaining({ fetch }));
+  });
+
   it('connects once, emits init info with session id, and caches across listTools calls', async () => {
     const state = installFakeConnection({ sessionId: 'sess-1' });
     const server = makeServer({});

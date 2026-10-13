@@ -2,6 +2,7 @@ import type { Logger } from 'winston';
 import type { ILLM } from '../core/llm/ILLM';
 import type { ToolSource } from '../core/mcp/IMCPServer';
 import { RemoteMCP, type RemoteMcpHeaders } from '../core/mcp/RemoteMCP';
+import type { RemoteMcpFetch } from '../core/mcp/remoteMcpClient';
 import type { ToolSelectorConfig } from '../core/mcp/ToolSelectorPolicy';
 import { ToolSet } from '../core/mcp/ToolSet';
 import type { AgentDefinition, ModelParams } from '../core/runtime/AgentDefinition';
@@ -73,7 +74,7 @@ export class TurnResourceResolver<
        * runtime supplies the catalog. Called once per distinct server name per
        * turn. Throw for unknown names. `headers` supports the async resolver form.
        */
-      mcp: (name: string) => Promise<{ url: string; headers?: RemoteMcpHeaders }>;
+      mcp: (name: string) => Promise<{ url: string; headers?: RemoteMcpHeaders; fetch?: RemoteMcpFetch }>;
       mcpRequestTimeoutMs: number;
       mcpConnectTimeoutMs: number;
       mcpMaxResponseBytes?: number | undefined;
@@ -183,12 +184,13 @@ export class TurnResourceResolver<
         const source = await this.getOrCreateToolSource({
           id: entry.name,
           create: async () => {
-            const { url, headers } = await this.deps.mcp(entry.name);
+            const { url, headers, fetch } = await this.deps.mcp(entry.name);
             return new RemoteMCP({
               id: entry.name,
               name: entry.name,
               url,
               headers: headers ?? {},
+              ...(fetch === undefined ? {} : { fetch }),
               sessionId: previousTurn?.snapshot.mcp_servers?.[entry.name]?.session_id,
               requestTimeoutMs: this.deps.mcpRequestTimeoutMs,
               connectTimeoutMs: this.deps.mcpConnectTimeoutMs,

@@ -6,6 +6,7 @@ import {
   type AgentTracing,
   type DaytonaSandboxEnvironment,
   type ModelParams,
+  type RemoteMcpFetch,
   type RemoteMcpHeaders,
   type SandboxProvider,
   type Skill,
@@ -22,6 +23,8 @@ import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { ISkillStore } from '../db/skillStore';
 import type { TurnMetadata } from '../db/turnMetadata';
 import type { IWebSearchProviderStore } from '../db/webSearchProviderStore';
+import { trueForgeMcpConnection } from '../mcp/server/trueforge/route';
+import { TRUEFORGE_CONNECTOR_NAME } from '../mcp/server/trueforge/server';
 import { LocalSandboxProvider } from '../sandbox/local/provider/LocalSandboxProvider';
 import { getCachedLocalSandboxSupport, isLocalSandboxFallbackEnabled } from '../sandbox/localRuntime';
 import {
@@ -36,6 +39,7 @@ import { hasConfiguredWebSearchProvider } from '../websearch/providers';
 export interface McpConnection {
   url: string;
   headers: RemoteMcpHeaders;
+  fetch?: RemoteMcpFetch;
 }
 
 /** Split `provider/model` FQN. Returns undefined when the shape is not exactly one slash. */
@@ -133,13 +137,17 @@ export async function getMcpConnection({
   if (record === undefined) {
     return undefined;
   }
+  const headers = store.resolveInvokeHeaders({
+    record,
+    userRef,
+    ...(turnMetadata === undefined ? {} : { turnMetadata }),
+  });
+  if (name === TRUEFORGE_CONNECTOR_NAME) {
+    return { ...trueForgeMcpConnection, headers };
+  }
   return {
     url: record.manifest.url,
-    headers: store.resolveInvokeHeaders({
-      record,
-      userRef,
-      ...(turnMetadata === undefined ? {} : { turnMetadata }),
-    }),
+    headers,
   };
 }
 
