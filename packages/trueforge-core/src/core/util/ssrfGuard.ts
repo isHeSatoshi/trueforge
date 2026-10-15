@@ -3,6 +3,8 @@ import { lookup as dnsLookup } from 'node:dns';
 import { lookup as dnsLookupAsync } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
+import type { OperationMetrics, OutboundHttpOutcome, OutboundHttpPool } from '../observability/operationMetrics';
+import { elapsedSeconds, outboundHttpStatusClass } from '../observability/operationMetrics';
 
 let allowedHosts: string[] = [];
 let blockedHosts: string[] = [];
@@ -31,6 +33,11 @@ export interface OutboundFetchOptions {
    * timeouts and 409/520/524 are not retried.
    */
   idempotent: boolean;
+  /** When set, each fetch records one observation. Absent skips metrics. */
+  metrics?: {
+    pool: OutboundHttpPool;
+    operations: OperationMetrics;
+  };
 }
 
 export interface OutboundFetch {
@@ -474,6 +481,35 @@ async function withOutboundHttpRetries(
   }
 }
 
+const OUTBOUND_TIMEOUT_CODES = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+
+function isBlockedOutboundError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current != null; depth += 1) {
+    if (current instanceof Error && current.message.startsWith('Outbound URL blocked')) {
+      return true;
+    }
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return false;
+}
+
+function failedOutboundHttpOutcome(error: unknown): Exclude<OutboundHttpOutcome, 'success'> {
+  if (isBlockedOutboundError(error)) {
+    return 'blocked';
+  }
+  const code = getErrorCode(error);
+  if (code !== undefined && OUTBOUND_TIMEOUT_CODES.has(code)) {
+    return 'timeout';
+  }
+  return 'error';
+}
+
+/** 2xx and 3xx completed the transport. 4xx and 5xx are errors; the status class still says which. */
+function responseOutboundHttpOutcome(status: number): OutboundHttpOutcome {
+  return status >= 200 && status < 400 ? 'success' : 'error';
+}
+
 /** Builds a pooled undici Agent + SSRF-guarded fetch with the given timeouts/retries. */
 export function createOutboundFetch(options: OutboundFetchOptions): OutboundFetch {
   const agent = new Agent({
@@ -484,8 +520,33 @@ export function createOutboundFetch(options: OutboundFetchOptions): OutboundFetc
   });
   const maxRetries = options.maxRetries;
   const idempotent = options.idempotent;
+  const metrics = options.metrics;
   return {
-    fetch: (input, init) => withOutboundHttpRetries(input, init ?? {}, agent, { maxRetries, idempotent }),
+    fetch: async (input, init) => {
+      const startedMs = performance.now();
+      try {
+        const response = await withOutboundHttpRetries(input, init ?? {}, agent, { maxRetries, idempotent });
+        if (metrics !== undefined) {
+          metrics.operations.recordOutboundHttpRequest({
+            pool: metrics.pool,
+            outcome: responseOutboundHttpOutcome(response.status),
+            statusClass: outboundHttpStatusClass(response.status),
+            durationSeconds: elapsedSeconds(startedMs),
+          });
+        }
+        return response;
+      } catch (error) {
+        if (metrics !== undefined) {
+          metrics.operations.recordOutboundHttpRequest({
+            pool: metrics.pool,
+            outcome: failedOutboundHttpOutcome(error),
+            statusClass: 'none',
+            durationSeconds: elapsedSeconds(startedMs),
+          });
+        }
+        throw error;
+      }
+    },
     close: async () => {
       await agent.close().catch(() => undefined);
     },

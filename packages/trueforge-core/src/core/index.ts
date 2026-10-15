@@ -155,6 +155,14 @@ export type {
   AgentTracing,
 } from './tracing/AgentTracing';
 
+export { NOOP_OPERATION_METRICS, elapsedSeconds, outboundHttpStatusClass } from './observability/operationMetrics';
+export type {
+  OperationMetrics,
+  OutboundHttpOutcome,
+  OutboundHttpPool,
+  OutboundHttpStatusClass,
+} from './observability/operationMetrics';
+
 // Errors / utils
 export { AgentHarnessError, McpConnectionError, McpDcrConfigurationError } from './errors';
 export { REDIS_KEY_NAMESPACE, redisKey } from './redisKeys';
