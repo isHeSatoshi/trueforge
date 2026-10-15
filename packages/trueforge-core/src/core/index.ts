@@ -155,12 +155,12 @@ export type {
   AgentTracing,
 } from './tracing/AgentTracing';
 
-export { NOOP_OPERATION_METRICS, elapsedSeconds, outboundHttpStatusClass } from './observability/operationMetrics';
+export { NOOP_OPERATION_METRICS, elapsedSeconds } from './observability/operationMetrics';
 export type {
   OperationMetrics,
   OutboundHttpOutcome,
   OutboundHttpPool,
-  OutboundHttpStatusClass,
+  OutboundHttpStatusCode,
 } from './observability/operationMetrics';
 
 // Errors / utils
@@ -190,6 +190,7 @@ export {
 } from './util/outboundFetch';
 export { PromiseTimeoutError, withTimeout } from './util/promiseUtils';
 export {
+  OUTBOUND_URL_BLOCKED,
   assertSafeOutboundUrl,
   configureOutboundUrlGuard,
   createOutboundFetch,

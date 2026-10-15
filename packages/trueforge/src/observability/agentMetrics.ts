@@ -7,7 +7,7 @@ export function createOperationMetrics(registry: Registry): OperationMetrics {
   const requests = new Counter({
     name: 'outbound_http_requests_total',
     help: 'Outbound HTTP requests',
-    labelNames: ['pool', 'outcome', 'status_class'],
+    labelNames: ['pool', 'outcome', 'status_code'],
     registers: [registry],
   });
   const duration = new Histogram({
@@ -19,8 +19,8 @@ export function createOperationMetrics(registry: Registry): OperationMetrics {
   });
 
   return {
-    recordOutboundHttpRequest({ pool, outcome, statusClass, durationSeconds }): void {
-      requests.inc({ pool, outcome, status_class: statusClass });
+    recordOutboundHttpRequest({ pool, outcome, statusCode, durationSeconds }): void {
+      requests.inc({ pool, outcome, status_code: statusCode === 'none' ? 'none' : String(statusCode) });
       duration.observe({ pool, outcome }, durationSeconds);
     },
   };
