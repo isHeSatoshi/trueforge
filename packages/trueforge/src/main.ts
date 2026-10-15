@@ -129,6 +129,7 @@ import { EventSubscriptionRegistry } from './runtime/event-subscription';
 import type { ConnectedRedis } from './runtime/redis';
 import { initSentry } from './sentry';
 import { printStandaloneStartupBanner } from './startupBanner';
+import { headerValue } from './truefoundry/gatewayMetadata';
 import { InlineMcpServerStore } from './truefoundry/InlineMcpServerStore';
 import { InlineModelProviderStore } from './truefoundry/InlineModelProviderStore';
 import {
@@ -139,7 +140,7 @@ import {
   X_TFG_MODELS,
   X_TFG_SKILLS,
 } from './truefoundry/inlineResources';
-import { InlineSkillStore } from './truefoundry/InlineSkillStore';
+import { InlineSkillStore, overlayInlineTurnSkills } from './truefoundry/InlineSkillStore';
 import {
   parsePerServerMcpHeaders,
   X_TFG_MCP_HEADERS,
@@ -687,7 +688,11 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
     }
     return new InlineSkillStore({ inner: store, inline: parseInlineSkills(rawInline) });
   };
-  const createPeerTurnExecutionDeps = async (input: { session: SessionHandle; userRef: string }) => {
+  const createPeerTurnExecutionDeps = async (input: {
+    session: SessionHandle;
+    userRef: string;
+    requestHeaders?: Record<string, string> | undefined;
+  }) => {
     const requestContext = requestContextFromCreatedBySubject({
       tenant_id: input.session.tenant_id,
       created_by_subject: input.session.record.created_by_subject,
@@ -699,6 +704,14 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
         id: input.session.record.agent.id,
       });
     }
+    const rawInlineSkills = headerValue(input.requestHeaders, X_TFG_SKILLS);
+    const skillStore =
+      isTrueFoundryModeEnabled(configuration) && rawInlineSkills !== undefined
+        ? overlayInlineTurnSkills({
+            resolver: turnSkillsResolverStore,
+            inline: parseInlineSkills(rawInlineSkills),
+          })
+        : turnSkillsResolverStore;
     return {
       activeTurns,
       eventSubscriptions,
@@ -707,7 +720,7 @@ async function createServerRuntime<TTransaction>(persistence: ServerPersistence<
       agentStore,
       modelProviderStore: persistence.resolveModelProviderStore(requestContext, referencedAgent),
       mcpServerStore: persistence.resolveMcpServerStore(requestContext, referencedAgent),
-      skillStore: turnSkillsResolverStore,
+      skillStore,
       sandboxProviderStore: persistence.resolveSandboxProviderStore(requestContext),
       webSearchProviderStore: persistence.resolveWebSearchProviderStore(requestContext),
     };

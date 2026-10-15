@@ -126,6 +126,23 @@ export class ActiveTurnRegistry {
   }
 
   /**
+   * Abort a local run and wait until its drain has finished.
+   * A paused generator is parked on the abort latch, so this unparks it and lets
+   * the drain emit `turn.done`. Returns false when this process has no run.
+   */
+  async abortAndWait(input: { sessionId: string; turnId: string; abortReason: CancellationReason }): Promise<boolean> {
+    const run = this.runs.get(activeTurnKey(input.sessionId, input.turnId));
+    if (!run) {
+      return false;
+    }
+    if (!run.abortController.signal.aborted) {
+      run.abortController.abort(input.abortReason);
+    }
+    await run.waitUntilCompleted;
+    return true;
+  }
+
+  /**
    * The live turn handle for a turn executing in this process, or undefined when it is not
    * resumable here — never started, already terminal (the stream removed its run), aborting, or
    * registered without a handle.

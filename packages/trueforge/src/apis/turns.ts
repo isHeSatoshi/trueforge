@@ -6,6 +6,7 @@ import type { ISessionStore, Sessions, Turn, TurnStreamingEvent } from '@truefou
 import {
   CancellationReason,
   EventType,
+  resolvePreviousTurnId,
   SessionStoreConflictError,
   SessionStoreNotFoundError,
   TurnOffloadReason,
@@ -57,6 +58,7 @@ import {
   subscribeTurnRoute,
 } from '../routes/turnRoutes';
 import type { ActiveTurnRegistry } from '../runtime/activeTurns';
+import { cancelSessionTurn } from '../runtime/cancelTurn';
 import { StreamGoneError, type EventSubscription, type EventSubscriptionRegistry } from '../runtime/event-subscription';
 import { validateSandboxFilePath } from '../runtime/sandboxFilePath';
 import {
@@ -146,7 +148,12 @@ export interface TurnsRouterDeps {
    * The client-facing handler uses the request's own stores instead.
    */
   createPeerTurnExecutionDeps?:
-    ((input: { session: SessionHandle; userRef: string }) => Promise<BeginTurnExecutionDeps>) | undefined;
+    | ((input: {
+        session: SessionHandle;
+        userRef: string;
+        requestHeaders?: Record<string, string> | undefined;
+      }) => Promise<BeginTurnExecutionDeps>)
+    | undefined;
 }
 
 /**
@@ -164,6 +171,9 @@ export type BeginTurnExecutionDeps = Pick<
   sandboxProviderStore: ISandboxProviderStore;
   webSearchProviderStore: IWebSearchProviderStore;
   skillStore: Pick<ISkillStore, 'resolveTurnSkills'>;
+  /** Present on the HTTP create path so a previous turn can be superseded on its owner. */
+  sessionStore?: Pick<ISessionStore, 'getTurn'> | undefined;
+  redis?: RedisClient | undefined;
 };
 
 interface BeginTurnExecutionParams {
@@ -473,6 +483,28 @@ export async function beginTurnExecution(
   // First turn only: derive the title from the first user message. The store
   // never overwrites an existing title.
   const title = session.record.last_turn_id ? undefined : deriveSessionTitle(input);
+
+  // Unpark a live previous turn so its drain emits turn.done before this turn freezes the row.
+  const previousId = resolvePreviousTurnId(previousTurnId, session.record.last_turn_id);
+  if (previousId) {
+    const hadLocalRun = await deps.activeTurns.abortAndWait({
+      sessionId,
+      turnId: previousId,
+      abortReason: CancellationReason.CancelledForNextTurn,
+    });
+    if (!hadLocalRun && deps.sessionStore) {
+      await cancelSessionTurn(
+        {
+          activeTurns: deps.activeTurns,
+          session,
+          sessionStore: deps.sessionStore,
+          redis: deps.redis,
+          logger: deps.logger,
+        },
+        { turnId: previousId, reason: CancellationReason.CancelledForNextTurn },
+      );
+    }
+  }
 
   const turn = await session.createTurn({
     turn_id: turnId,
@@ -1201,6 +1233,7 @@ async function handlePeerTurnEvents(deps: TurnsRouterDeps, request: { body: unkn
       const executionDeps = await createPeerTurnExecutionDeps({
         session,
         userRef: parsed.data.user_ref,
+        requestHeaders: parsed.data.request_headers,
       });
       return deliverTurnEvents({
         session,

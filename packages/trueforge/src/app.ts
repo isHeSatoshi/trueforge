@@ -226,7 +226,11 @@ export interface ServerDeps<TTransaction> {
   /** Request-reply dispatch table served by this replica's executor. */
   requestReplyRouter: RequestReplyRouter;
   /** Store bundle for rebuilding a paused turn on a peer request, which has no HTTP context. */
-  createPeerTurnExecutionDeps: (input: { session: SessionHandle; userRef: string }) => Promise<BeginTurnExecutionDeps>;
+  createPeerTurnExecutionDeps: (input: {
+    session: SessionHandle;
+    userRef: string;
+    requestHeaders?: Record<string, string> | undefined;
+  }) => Promise<BeginTurnExecutionDeps>;
   /** Hands out each turn's resumable event stream to the create and subscribe handlers. */
   eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
   logger: Logger;

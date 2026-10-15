@@ -188,6 +188,7 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
   constructor(options: {
     store: ISessionStore<object, TTurnCustom>;
     turn: TurnRecord<TTurnCustom>;
+    // orchestrator and resolver are optional for store-only handles (e.g. from SessionHandle.getTurn)
     orchestrator?: AgentThreadOrchestrator | undefined;
     resolver?: ITurnResourceResolver<TTurnCustom> | undefined;
     abortController?: AbortController | undefined;
@@ -260,19 +261,13 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
   }
 
   async *send(events: TurnUserEvent[]): AsyncGenerator<TurnUserEvent[], void> {
-    const orchestrator = this.requireLiveOrchestrator('send');
-    const accepted = orchestrator.send(events);
-    yield* accepted;
-    orchestrator.wake();
-  }
-
-  private requireLiveOrchestrator(method: string): AgentThreadOrchestrator {
     if (!this.orchestrator) {
       throw new Error(
-        `TurnHandle.${method}() is only available on a live turn from SessionHandle.createTurn() or SessionHandle.rebuildTurn()`,
+        `TurnHandle.send() is only available on a live turn. Perhaps this turn handle was created for read only actions?`,
       );
     }
-    return this.orchestrator;
+    yield* this.orchestrator.send(events);
+    this.orchestrator.wake();
   }
 
   /**
@@ -393,14 +388,18 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
    * crash between persist and consume does not apply the same decision twice.
    */
   async replayUnconsumedInbox(): Promise<void> {
-    const orchestrator = this.requireLiveOrchestrator('replayUnconsumedInbox');
+    if (!this.orchestrator) {
+      throw new Error(
+        `TurnHandle.replayUnconsumedInbox() is only available on a live turn. Perhaps this turn handle was created for read only actions?`,
+      );
+    }
     const rows = await this.store.listUnconsumedTurnInboundEvents({
       session_id: this.turn.session_id,
       turn_id: this.turn.turn_id,
     });
     for (const event of rows) {
       try {
-        for await (const batch of orchestrator.send([event])) {
+        for await (const batch of this.orchestrator.send([event])) {
           void batch;
         }
       } catch (error) {
@@ -436,7 +435,7 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
     orchestrator: AgentThreadOrchestrator,
     signal: AbortSignal,
   ): AsyncGenerator<TurnStreamingEvent, AgentThreadExecutionResult> {
-    const generator = orchestrator.execute({ signal });
+    const generator = orchestrator.execute({ signal, resume: this.resume });
     try {
       let iterResult = await generator.next();
       while (!iterResult.done) {

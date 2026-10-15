@@ -26,7 +26,10 @@ import { TurnHandle } from './TurnHandle';
 /** How many recent ancestors SessionHandle persists on each turn. Store-local. */
 const MAX_TURN_ANCESTORS = 20;
 
-function resolvePreviousTurnId(requested: string | undefined, lastTurnId: string | null | undefined): string | null {
+export function resolvePreviousTurnId(
+  requested: string | undefined,
+  lastTurnId: string | null | undefined,
+): string | null {
   if (requested === 'none') {
     return null;
   }
