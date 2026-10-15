@@ -135,5 +135,5 @@ export type { TurnSandboxFactory } from './TurnResourceResolver';
 
 export { SessionHandle } from './SessionHandle';
 export { Sessions } from './Sessions';
-export { TurnHandle } from './TurnHandle';
+export { TurnHandle, TurnOffloadReason, isTurnOffloadReason } from './TurnHandle';
 export type { TurnStreamingEvent } from './TurnHandle';
