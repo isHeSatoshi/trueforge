@@ -25,23 +25,28 @@ async function assertThreadsExist(
 }
 
 export async function patchThreadsMCPAuth(db: Kysely<Database>, input: PatchThreadsMCPAuthInput): Promise<void> {
+  await db.transaction().execute(trx => patchThreadsMCPAuthInTransaction(trx, input));
+}
+
+export async function patchThreadsMCPAuthInTransaction(
+  trx: Transaction<Database>,
+  input: PatchThreadsMCPAuthInput,
+): Promise<void> {
   const threadIds = [...new Set(input.thread_ids)];
   const keys: TurnKeys = { session_id: input.session_id, turn_id: input.turn_id };
-  await db.transaction().execute(async trx => {
-    await assertTurnNonTerminal(trx, keys);
-    if (threadIds.length === 0) {
-      return;
-    }
-    await assertThreadsExist(trx, keys, threadIds);
-    await trx
-      .updateTable('turn_thread')
-      .set({
-        checkpoint: jsonbSet(sql.ref('checkpoint'), '$.pending_mcp_auth', input.pending_mcp_auth),
-        updated_at: nowIso(),
-      })
-      .where('session_id', '=', input.session_id)
-      .where('turn_id', '=', input.turn_id)
-      .where('thread_id', 'in', threadIds)
-      .execute();
-  });
+  await assertTurnNonTerminal(trx, keys);
+  if (threadIds.length === 0) {
+    return;
+  }
+  await assertThreadsExist(trx, keys, threadIds);
+  await trx
+    .updateTable('turn_thread')
+    .set({
+      checkpoint: jsonbSet(sql.ref('checkpoint'), '$.pending_mcp_auth', input.pending_mcp_auth),
+      updated_at: nowIso(),
+    })
+    .where('session_id', '=', input.session_id)
+    .where('turn_id', '=', input.turn_id)
+    .where('thread_id', 'in', threadIds)
+    .execute();
 }
