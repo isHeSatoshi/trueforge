@@ -36,6 +36,7 @@ export async function appendToEvents(
   const keys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
 
   const eventRows = input.events.map(event => ({

@@ -13,8 +13,8 @@ import { jsonbBind, jsonbSet, nowIso } from '../../sqlExpressions';
 import type { Database, TurnThreadCheckpoint } from '../../types';
 import { sortedByAppendId } from '../sqlExpressions';
 import {
-  assertTurnNonTerminal,
-  assertTurnRunning,
+  assertOwnedNonTerminalTurn,
+  assertOwnedRunningTurn,
   classifyNonTerminalTurnThreadWriteFailure,
   classifyTurnFenceWriteFailure,
   type TurnKeys,
@@ -31,9 +31,10 @@ export async function addThreads(db: Kysely<Database>, input: AddThreadsInput): 
 }
 
 export async function addThreadsInTransaction(db: DbOrTrx, input: AddThreadsInput): Promise<void> {
-  await assertTurnRunning(db, {
+  await assertOwnedRunningTurn(db, {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   });
 
   const now = nowIso();
@@ -182,9 +183,10 @@ export async function removeThreadsInTransaction(db: DbOrTrx, input: RemoveThrea
     return;
   }
 
-  await assertTurnRunning(db, {
+  await assertOwnedRunningTurn(db, {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   });
 
   await db
@@ -249,7 +251,7 @@ async function fencedTurnThreadContextUpdate(
 ): Promise<void> {
   const { keys, thread_id, context, replace_array } = args;
 
-  await assertTurnNonTerminal(db, keys);
+  await assertOwnedNonTerminalTurn(db, keys);
 
   const now = nowIso();
 
@@ -335,6 +337,7 @@ export async function appendToThreadContextInTransaction(
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      active_executor_id: input.active_executor_id,
     },
     thread_id: input.thread_id,
     context: input.context,
@@ -354,6 +357,7 @@ export async function overwriteThreadContext(db: Kysely<Database>, input: Overwr
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      active_executor_id: input.active_executor_id,
     },
     thread_id: input.event.thread_id,
     context: input.event.context,
@@ -377,6 +381,7 @@ export async function patchMCPServers(db: DbOrTrx, input: PatchMCPServersInput):
   const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
 
   // jsonb_patch is RFC 7396 (deep); rebuild via json_each so each id's value is replaced.
@@ -407,6 +412,7 @@ export async function patchMCPServers(db: DbOrTrx, input: PatchMCPServersInput):
     })
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
+    .where('active_executor_id', '=', keys.active_executor_id)
     .where(sql<boolean>`state->>'status' IN ('running', 'paused')`)
     .executeTakeFirst();
 
@@ -422,6 +428,7 @@ export async function patchSandboxInfo(db: DbOrTrx, input: PatchSandboxInfoInput
   const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
 
   const result = await db
@@ -432,6 +439,7 @@ export async function patchSandboxInfo(db: DbOrTrx, input: PatchSandboxInfoInput
     })
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
+    .where('active_executor_id', '=', keys.active_executor_id)
     .where(sql<boolean>`state->>'status' = 'running'`)
     .executeTakeFirst();
 

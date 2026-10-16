@@ -11,6 +11,7 @@ import type {
   AddThreadsInput,
   AppendToEventsInput,
   AppendToThreadContextInput,
+  ClaimTurnExecutorInput,
   CreateSessionInput,
   CreateTurnInput,
   DeleteSessionInput,
@@ -57,6 +58,7 @@ import {
   TurnEventAlreadyExistsError,
   TurnNotFoundError,
   TurnNotRunningError,
+  TurnOwnershipLostError,
 } from './SessionStoreErrors';
 
 /* eslint-disable @typescript-eslint/require-await -- in-memory store is synchronous; methods stay async so thrown SessionStore*Error reject as Promises for ISessionStore callers */
@@ -542,10 +544,20 @@ export class InMemorySessionStore<
     return paginate(records, input.limit, input.page_token);
   }
 
+  async claimTurnExecutor(input: ClaimTurnExecutorInput): Promise<boolean> {
+    const turn = this.turns.get(turnKey({ session_id: input.session_id, turn_id: input.turn_id }));
+    if (turn?.state.status !== 'paused' || turn.active_executor_id !== input.expected_executor_id) {
+      return false;
+    }
+    turn.active_executor_id = input.new_executor_id;
+    turn.updated_at = new Date();
+    return true;
+  }
+
   async updateTurnNonTerminalState(input: UpdateTurnNonTerminalStateInput): Promise<void> {
     // Same as createTurn: synchronous body ⇒ atomic under run-to-completion.
     const tKey = turnKey(input);
-    const turn = this.requireTurn(input.session_id, input.turn_id);
+    const turn = this.requireOwnedTurn(input);
     const expectedSourceStatus = input.state.status === 'paused' ? 'running' : 'paused';
     if (turn.state.status !== expectedSourceStatus) {
       if (isNonTerminalTurnState(turn.state)) {
@@ -566,7 +578,7 @@ export class InMemorySessionStore<
 
   async updateTurnTerminalState(input: UpdateTurnTerminalStateInput): Promise<void> {
     const tKey = turnKey(input);
-    const turn = this.requireTurn(input.session_id, input.turn_id);
+    const turn = this.requireOwnedTurn(input);
     if (!isNonTerminalTurnState(turn.state)) {
       throw new TurnNotRunningError(input.turn_id, turn.state);
     }
@@ -587,7 +599,8 @@ export class InMemorySessionStore<
     if (transaction !== undefined) {
       return transaction.appendToEvents(input);
     }
-    this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    this.requireNonTerminalTurn(input);
     const tKey = turnKey(input);
     const list = this.events.get(tKey);
     if (!list) {
@@ -604,7 +617,8 @@ export class InMemorySessionStore<
     if (transaction !== undefined) {
       return transaction.patchThreadsMCPAuth(input);
     }
-    const turn = this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireNonTerminalTurn(input);
     const threads = input.thread_ids.map(threadId => {
       const thread = turn.snapshot.threads[threadId];
       if (!thread) {
@@ -623,7 +637,7 @@ export class InMemorySessionStore<
       return;
     }
     this.requireSession(input.session_id);
-    this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireNonTerminalTurn(input);
     const tKey = turnKey(input);
     let list = this.inboundEvents.get(tKey);
     if (!list) {
@@ -652,7 +666,7 @@ export class InMemorySessionStore<
 
   async listUnconsumedTurnInboundEvents(input: ListUnconsumedTurnInboundEventsInput): Promise<TurnUserEvent[]> {
     this.requireSession(input.session_id);
-    this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireNonTerminalTurn(input);
     const list = this.inboundEvents.get(turnKey(input)) ?? [];
     return list
       .filter(row => !row.consumed)
@@ -672,16 +686,22 @@ export class InMemorySessionStore<
       return;
     }
     this.requireSession(input.session_id);
-    this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireNonTerminalTurn(input);
     const list = this.inboundEvents.get(turnKey(input)) ?? [];
     const byId = new Map(list.map(row => [row.event.id, row]));
-    for (const eventId of input.event_ids) {
+    const uniqueIds = [...new Set(input.event_ids)];
+    // Check all ids first so a missing id rolls back like the DB backends.
+    const rows: StoredInboundEvent[] = [];
+    for (const eventId of uniqueIds) {
       const row = byId.get(eventId);
       if (!row) {
         throw new SessionStoreInvariantError(
           `Inbound event not found for mark-consumed: ${input.session_id}/${input.turn_id}/${eventId}`,
         );
       }
+      rows.push(row);
+    }
+    for (const row of rows) {
       row.consumed = true;
     }
   }
@@ -716,21 +736,36 @@ export class InMemorySessionStore<
     return turn;
   }
 
-  private requireRunningTurn(sessionId: string, turnId: string): TurnRecord<TTurnCustom> {
-    const turn = this.requireTurn(sessionId, turnId);
-    if (turn.state.status === 'paused') {
-      throw new SessionStoreInvariantError(`expected running state for turn ${turnId}, got paused`);
-    }
-    if (turn.state.status !== 'running') {
-      throw new TurnNotRunningError(turnId, turn.state);
+  private requireOwnedTurn(input: {
+    session_id: string;
+    turn_id: string;
+    active_executor_id: string;
+  }): TurnRecord<TTurnCustom> {
+    const turn = this.requireTurn(input.session_id, input.turn_id);
+    if (turn.active_executor_id !== input.active_executor_id) {
+      throw new TurnOwnershipLostError({
+        turn_id: input.turn_id,
+        active_executor_id: input.active_executor_id,
+      });
     }
     return turn;
   }
 
-  private requireNonTerminalTurn(sessionId: string, turnId: string): TurnRecord<TTurnCustom> {
-    const turn = this.requireTurn(sessionId, turnId);
+  private requireRunningTurn(input: { session_id: string; turn_id: string }): TurnRecord<TTurnCustom> {
+    const turn = this.requireTurn(input.session_id, input.turn_id);
+    if (turn.state.status === 'paused') {
+      throw new SessionStoreInvariantError(`expected running state for turn ${input.turn_id}, got paused`);
+    }
+    if (turn.state.status !== 'running') {
+      throw new TurnNotRunningError(input.turn_id, turn.state);
+    }
+    return turn;
+  }
+
+  private requireNonTerminalTurn(input: { session_id: string; turn_id: string }): TurnRecord<TTurnCustom> {
+    const turn = this.requireTurn(input.session_id, input.turn_id);
     if (turn.state.status !== 'running' && turn.state.status !== 'paused') {
-      throw new TurnNotRunningError(turnId, turn.state);
+      throw new TurnNotRunningError(input.turn_id, turn.state);
     }
     return turn;
   }
@@ -742,7 +777,8 @@ export class InMemorySessionStore<
     if (transaction !== undefined) {
       return transaction.addThreads(input);
     }
-    const turn = this.requireRunningTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireRunningTurn(input);
     for (const thread of input.threads) {
       turn.snapshot.threads[thread.thread_id] = deepCopy(thread);
     }
@@ -760,7 +796,8 @@ export class InMemorySessionStore<
     if (input.thread_ids.length === 0) {
       return;
     }
-    const turn = this.requireRunningTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireRunningTurn(input);
     for (const id of input.thread_ids) {
       Reflect.deleteProperty(turn.snapshot.threads, id);
     }
@@ -775,7 +812,8 @@ export class InMemorySessionStore<
     if (transaction !== undefined) {
       return transaction.appendToThreadContext(input);
     }
-    const turn = this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireNonTerminalTurn(input);
     const thread = turn.snapshot.threads[input.thread_id];
     if (!thread) {
       throw new SessionStoreInvariantError(`Thread not found: ${input.thread_id}`);
@@ -792,7 +830,8 @@ export class InMemorySessionStore<
   }
 
   async overwriteThreadContext(input: OverwriteThreadContextInput): Promise<void> {
-    const turn = this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireNonTerminalTurn(input);
     const threadId = input.event.thread_id;
     const thread = turn.snapshot.threads[threadId];
     if (!thread) {
@@ -811,7 +850,8 @@ export class InMemorySessionStore<
     if (transaction !== undefined) {
       return transaction.patchMCPServers(input);
     }
-    const turn = this.requireNonTerminalTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireNonTerminalTurn(input);
     turn.snapshot.mcp_servers ??= {};
     for (const server of input.mcp_servers) {
       turn.snapshot.mcp_servers[server.id] = deepCopy(server);
@@ -827,14 +867,16 @@ export class InMemorySessionStore<
     if (transaction !== undefined) {
       return transaction.patchSandboxInfo(input);
     }
-    const turn = this.requireRunningTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireRunningTurn(input);
     turn.snapshot.sandbox_info = deepCopy(input.sandbox_info);
     turn.updated_at = new Date();
     return;
   }
 
   async patchThreadCapabilityState(input: PatchThreadCapabilityStateInput): Promise<void> {
-    const turn = this.requireRunningTurn(input.session_id, input.turn_id);
+    this.requireOwnedTurn(input);
+    const turn = this.requireRunningTurn(input);
     const thread = turn.snapshot.threads[input.thread_id];
     if (!thread) {
       throw new SessionStoreInvariantError(`Thread not found: ${input.thread_id}`);

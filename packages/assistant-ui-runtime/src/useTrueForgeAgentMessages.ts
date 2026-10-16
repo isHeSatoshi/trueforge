@@ -1119,6 +1119,10 @@ export function useTrueForgeAgentMessages({
         throw new Error('Cannot send a required-action event without an active turn.');
       }
 
+      // Capture pre-submit overlay values so a failed policy send restores
+      // siblings that already had a decision (e.g. deny + reason) instead of
+      // leaving the optimistic `{ approved: true }` write from this submit.
+      const priorApprovals = new Map(snapshotRef.current.requiredActions.approvals);
       actionSubmissionsRef.current.add(submissionId);
       snapshotRef.current = optimisticSnapshot;
       setSnapshot(optimisticSnapshot);
@@ -1152,6 +1156,15 @@ export function useTrueForgeAgentMessages({
               approvals.delete(event.toolCallId);
             } else if (event.type === EVENT_TYPE.USER_TOOL_RESPONSE) {
               toolResponses.delete(event.toolCallId);
+            } else if (event.type === EVENT_TYPE.USER_TOOL_APPROVAL_POLICY) {
+              for (const toolCallId of optimisticSnapshot.requiredActions.approvals.keys()) {
+                const prior = priorApprovals.get(toolCallId);
+                if (prior !== undefined) {
+                  approvals.set(toolCallId, prior);
+                } else {
+                  approvals.delete(toolCallId);
+                }
+              }
             }
           }
           return replaceSessionSnapshot(previous, {
@@ -1176,13 +1189,10 @@ export function useTrueForgeAgentMessages({
       if (pending == null) {
         throw new Error(`Pending approval not found: ${response.approvalId}`);
       }
-      const event: UserToolApprovalInputEvent = {
-        type: EVENT_TYPE.USER_TOOL_APPROVAL,
-        threadId: pending.threadId,
-        toolCallId: response.approvalId,
-        approval: mapApprovalDecision(response.approved, response.reason),
-      };
-      const events: TurnInboundEventItem[] = [event];
+      // allow session and for allow 1o min need to send policy only
+      // For allow once need to send approval
+      // For deny need to send approval and reason
+      const events: TurnInboundEventItem[] = [];
       const approvals = new Map(previous.requiredActions.approvals);
       if (response.policy != null) {
         const target = resolveToolApprovalPolicyTarget({
@@ -1200,6 +1210,15 @@ export function useTrueForgeAgentMessages({
             approvals.set(toolCallId, { approved: true });
           }
         }
+      }
+      if (events.length === 0) {
+        const event: UserToolApprovalInputEvent = {
+          type: EVENT_TYPE.USER_TOOL_APPROVAL,
+          threadId: pending.threadId,
+          toolCallId: response.approvalId,
+          approval: mapApprovalDecision(response.approved, response.reason),
+        };
+        events.push(event);
       }
       approvals.set(response.approvalId, {
         approved: response.approved,

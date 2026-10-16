@@ -16,7 +16,7 @@ import { toTurnUserEvent, toTurnUserEventMessage } from '../../../turnInboundEve
 import { isUniqueViolation } from '../../client';
 import { json } from '../../sqlExpressions';
 import type { Database } from '../../types';
-import { assertTurnNonTerminal, type TurnKeys } from './turns';
+import { assertTurnNonTerminal } from './turns';
 
 type DbOrTrx = Kysely<Database> | Transaction<Database>;
 
@@ -69,10 +69,7 @@ export async function insertTurnInboundEvents(
     });
   }
 
-  const keys: TurnKeys = {
-    session_id: input.session_id,
-    turn_id: input.turn_id,
-  };
+  const keys = { session_id: input.session_id, turn_id: input.turn_id };
 
   try {
     // Ensure the turn does not stop before we insert events.
@@ -153,10 +150,7 @@ export async function markTurnInboundEventsConsumedInTransaction(
   await requireSession(trx, input.session_id);
 
   const uniqueIds = [...new Set(input.event_ids)];
-  const keys: TurnKeys = {
-    session_id: input.session_id,
-    turn_id: input.turn_id,
-  };
+  const keys = { session_id: input.session_id, turn_id: input.turn_id };
 
   await assertTurnNonTerminal(trx, keys);
   const existing = await trx

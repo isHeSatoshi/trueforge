@@ -38,6 +38,7 @@ export async function appendToEventsInTransaction(
   const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
 
   const fenceRow = await db
@@ -45,6 +46,7 @@ export async function appendToEventsInTransaction(
     .select(sql`1`.as('one'))
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
+    .where('active_executor_id', '=', keys.active_executor_id)
     .where(sql<boolean>`state->>'status' IN ('running', 'paused')`)
     .executeTakeFirst();
 

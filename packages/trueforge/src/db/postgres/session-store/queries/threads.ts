@@ -15,7 +15,7 @@ import { json, jsonbSet } from '../../sqlExpressions';
 import type { Database, TurnThreadCheckpoint } from '../../types';
 import { values } from '../sqlExpressions';
 import {
-  assertTurnRunning,
+  assertOwnedRunningTurn,
   classifyNonTerminalTurnThreadWriteFailure,
   classifyTurnFenceWriteFailure,
   turnNonTerminalFence,
@@ -43,9 +43,10 @@ export async function addThreads(db: Kysely<Database>, input: AddThreadsInput): 
 }
 
 export async function addThreadsInTransaction(db: DbOrTrx, input: AddThreadsInput): Promise<void> {
-  await assertTurnRunning(db, {
+  await assertOwnedRunningTurn(db, {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   });
 
   const now = new Date();
@@ -157,6 +158,7 @@ export async function removeThreads(db: DbOrTrx, input: RemoveThreadsInput): Pro
   const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
   const onFence = sql<boolean>`EXISTS (SELECT 1 FROM turn_fence)`;
 
@@ -300,6 +302,7 @@ export async function appendToThreadContext(db: DbOrTrx, input: AppendToThreadCo
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      active_executor_id: input.active_executor_id,
     },
     thread_id: input.thread_id,
     context: input.context,
@@ -319,6 +322,7 @@ export async function overwriteThreadContext(db: Kysely<Database>, input: Overwr
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      active_executor_id: input.active_executor_id,
     },
     thread_id: input.event.thread_id,
     context: input.event.context,
@@ -343,6 +347,7 @@ export async function patchMCPServers(db: DbOrTrx, input: PatchMCPServersInput):
   const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
 
   const result = await db
@@ -356,6 +361,7 @@ export async function patchMCPServers(db: DbOrTrx, input: PatchMCPServersInput):
     .set({ updated_at: sql`now()` })
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
+    .where('active_executor_id', '=', keys.active_executor_id)
     .where(sql<boolean>`state->>'status' IN ('running', 'paused')`)
     .executeTakeFirst();
 
@@ -372,6 +378,7 @@ export async function patchSandboxInfo(db: DbOrTrx, input: PatchSandboxInfoInput
   const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    active_executor_id: input.active_executor_id,
   };
 
   const result = await db
@@ -380,6 +387,7 @@ export async function patchSandboxInfo(db: DbOrTrx, input: PatchSandboxInfoInput
     .set({ updated_at: sql`now()` })
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
+    .where('active_executor_id', '=', keys.active_executor_id)
     .where(sql<boolean>`state->>'status' = 'running'`)
     .executeTakeFirst();
 
